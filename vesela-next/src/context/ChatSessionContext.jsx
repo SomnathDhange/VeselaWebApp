@@ -108,7 +108,11 @@ export const ChatSessionProvider = ({ children }) => {
   }, [pendingHeroMessage]);
 
   useEffect(() => {
-    setStored(STORAGE_KEYS.guestMessages, guestMessages);
+    // Filter out transient placeholder/empty assistant messages from persistent storage
+    const filtered = guestMessages.filter(
+      (m) => !(m.role === "assistant" && !m.message),
+    );
+    setStored(STORAGE_KEYS.guestMessages, filtered);
   }, [guestMessages]);
 
   useEffect(() => {
@@ -196,6 +200,14 @@ export const ChatSessionProvider = ({ children }) => {
 
       setGuestError("");
 
+      const assistantMessageId = crypto.randomUUID();
+      // Add the typing placeholder assistant bubble
+      appendGuestMessage({
+        id: assistantMessageId,
+        role: "assistant",
+        message: "",
+      });
+
       try {
         // ---------------------------------------------------
         // API BODY
@@ -221,12 +233,17 @@ export const ChatSessionProvider = ({ children }) => {
         // ---------------------------------------------------
 
         if (error || status !== 201) {
-          appendGuestMessage({
-            id: crypto.randomUUID(),
-            role: "assistant",
-            message: "I could not answer right now. Please retry.",
-            isError: true,
-            retryText: trimmed,
+          setGuestMessages((prev) => {
+            const idx = prev.findIndex((m) => m.id === assistantMessageId);
+            if (idx === -1) return prev;
+            const next = [...prev];
+            next[idx] = {
+              ...next[idx],
+              message: "I could not answer right now. Please retry.",
+              isError: true,
+              retryText: trimmed,
+            };
+            return next;
           });
 
           return {
@@ -242,6 +259,19 @@ export const ChatSessionProvider = ({ children }) => {
         const response = data?.response;
 
         if (!response) {
+          setGuestMessages((prev) => {
+            const idx = prev.findIndex((m) => m.id === assistantMessageId);
+            if (idx === -1) return prev;
+            const next = [...prev];
+            next[idx] = {
+              ...next[idx],
+              message: "I could not answer right now. Please retry.",
+              isError: true,
+              retryText: trimmed,
+            };
+            return next;
+          });
+
           return {
             ok: false,
             reason: "invalid_response",
@@ -276,11 +306,16 @@ export const ChatSessionProvider = ({ children }) => {
 
         const responseText = response?.text || "";
 
-        appendGuestMessage({
-          id: crypto.randomUUID(),
-          role: "assistant",
-          message:
-            responseText || "Thanks. I am ready for your next question.",
+        // Update the assistant bubble with the actual response text
+        setGuestMessages((prev) => {
+          const idx = prev.findIndex((m) => m.id === assistantMessageId);
+          if (idx === -1) return prev;
+          const next = [...prev];
+          next[idx] = {
+            ...next[idx],
+            message: responseText || "Thanks. I am ready for your next question.",
+          };
+          return next;
         });
 
         // ---------------------------------------------------
@@ -301,12 +336,18 @@ export const ChatSessionProvider = ({ children }) => {
       } catch (err) {
         console.error(err);
 
-        appendGuestMessage({
-          id: crypto.randomUUID(),
-          role: "assistant",
-          message: "Network error. Please retry.",
-          isError: true,
-          retryText: trimmed,
+        // Update the assistant bubble with error info
+        setGuestMessages((prev) => {
+          const idx = prev.findIndex((m) => m.id === assistantMessageId);
+          if (idx === -1) return prev;
+          const next = [...prev];
+          next[idx] = {
+            ...next[idx],
+            message: "Network error. Please retry.",
+            isError: true,
+            retryText: trimmed,
+          };
+          return next;
         });
 
         setGuestError("Failed to send guest message.");
