@@ -87,7 +87,7 @@ export default function PricingPage() {
 
   const handleFreeSelect = () => {
     if (isAuthenticated) {
-      window.location.href = "/chat";
+      window.location.href = "/welcome";
     } else {
       openModal(MODALS.LOGIN, { source: "public" });
     }
