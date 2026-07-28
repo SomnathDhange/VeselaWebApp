@@ -1,6 +1,6 @@
 "use client";
 
-import { useState } from "react";
+import { useState, useCallback } from "react";
 import {
   Box,
   Checkbox,
@@ -51,7 +51,7 @@ const SignUpForm = ({ handleNext }) => {
   const { mode, toggleColorMode } = useColorMode();
   const { modalOptions } = useModal();
 
-  const setDarkMode = () => {
+  const setDarkMode = useCallback(() => {
     if (modalOptions?.source === "chat") {
       return;
     }
@@ -59,7 +59,7 @@ const SignUpForm = ({ handleNext }) => {
       localStorageUtil.set("theme", "dark");
       toggleColorMode();
     }
-  };
+  }, [modalOptions?.source, mode, toggleColorMode]);
 
   const { errorMsg, signUp } = useSignUp(handleNext, setDarkMode);
 
