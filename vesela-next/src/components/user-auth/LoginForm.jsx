@@ -1,6 +1,6 @@
 "use client";
 
-import { useState } from "react";
+import { useState, useCallback } from "react";
 import { useFormik } from "formik";
 import * as Yup from "yup";
 import {
@@ -42,7 +42,7 @@ const LoginForm = ({ handleNext }) => {
   const { mode, toggleColorMode } = useColorMode();
   const { modalOptions } = useModal();
 
-  const setDarkMode = () => {
+  const setDarkMode = useCallback(() => {
     if (modalOptions?.source === "chat") {
       return;
     }
@@ -50,7 +50,7 @@ const LoginForm = ({ handleNext }) => {
       localStorageUtil.set("theme", "dark");
       toggleColorMode();
     }
-  };
+  }, [modalOptions?.source, mode, toggleColorMode]);
 
   const { login, errorMsg } = useLogin(handleNext, setDarkMode);
 

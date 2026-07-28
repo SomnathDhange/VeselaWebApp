@@ -1,6 +1,6 @@
 "use client";
 
-import { createContext, useContext, useState } from "react";
+import { createContext, useContext, useState, useCallback } from "react";
 
 const ModalContext = createContext(null);
 
@@ -8,19 +8,19 @@ export const ModalProvider = ({ children }) => {
   const [currentModal, setCurrentModal] = useState(null);
   const [modalOptions, setModalOptions] = useState({});
 
-  const openModal = (modal, options) => {
+  const openModal = useCallback((modal, options) => {
     setCurrentModal(modal);
     if (options !== undefined) {
       setModalOptions(options || {});
     } else {
       setModalOptions((prev) => prev || {});
     }
-  };
+  }, []);
   
-  const closeModal = () => {
+  const closeModal = useCallback(() => {
     setCurrentModal(null);
     setModalOptions({});
-  };
+  }, []);
 
   return (
     <ModalContext.Provider

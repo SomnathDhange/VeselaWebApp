@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useRef, useState, useCallback } from "react";
+import { useEffect, useRef, useState, useCallback, memo } from "react";
 import { Box, CircularProgress, Typography, useTheme } from "@mui/material";
 import { useAuth } from "@/context/AuthContext";
 import { post } from "@/lib/apiService";
@@ -8,7 +8,7 @@ import { MODALS } from "../modals/modalConstants";
 
 const FALLBACK_CLIENT_ID = "99296678682-10eca36rb47jdoi88gjuuovpg0a49ukc.apps.googleusercontent.com";
 
-export default function GoogleLoginButton({ handleNext, setDarkMode }) {
+function GoogleLoginButton({ handleNext, setDarkMode }) {
   const { login } = useAuth();
   const theme = useTheme();
   const isLight = theme.palette.mode === "light";
@@ -60,6 +60,13 @@ export default function GoogleLoginButton({ handleNext, setDarkMode }) {
     }
   }, [login, setDarkMode, handleNext]);
 
+  // Callback Ref pattern to decouple handleCredentialResponse from GIS initialization effect.
+  // This prevents the Google Sign-In button from reloading/flickering when parent form fields change.
+  const handleCredentialResponseRef = useRef(handleCredentialResponse);
+  useEffect(() => {
+    handleCredentialResponseRef.current = handleCredentialResponse;
+  }, [handleCredentialResponse]);
+
   useEffect(() => {
     let active = true;
 
@@ -72,7 +79,9 @@ export default function GoogleLoginButton({ handleNext, setDarkMode }) {
 
         window.google.accounts.id.initialize({
           client_id: clientId,
-          callback: handleCredentialResponse,
+          callback: (response) => {
+            handleCredentialResponseRef.current?.(response);
+          },
         });
 
         window.google.accounts.id.renderButton(containerRef.current, {
@@ -107,7 +116,7 @@ export default function GoogleLoginButton({ handleNext, setDarkMode }) {
     return () => {
       active = false;
     };
-  }, [isLight, clientId, handleCredentialResponse]);
+  }, [isLight, clientId]);
 
   return (
     <Box
@@ -207,3 +216,5 @@ export default function GoogleLoginButton({ handleNext, setDarkMode }) {
     </Box>
   );
 }
+
+export default memo(GoogleLoginButton);
