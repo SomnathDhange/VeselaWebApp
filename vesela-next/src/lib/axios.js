@@ -17,11 +17,17 @@ const api = axios.create({
 // ─── Refresh token state ──────────────────────────────────────────────────────
 
 // Whether a refresh call is already in-flight
+// This is module-level. In development (HMR) it may survive navigation.
+// We reset it here at parse time so each fresh module evaluation starts clean.
 let isRefreshing = false;
 
 // Callbacks waiting for the refresh to complete
 // Each item: { resolve, reject, config }
 let refreshQueue = [];
+
+// Safety timeout reference — if a refresh hangs (e.g. server unresponsive),
+// we forcibly unlock after 10 s so queued requests are not blocked forever.
+let refreshSafetyTimer = null;
 
 function processQueue(error) {
   for (const item of refreshQueue) {
@@ -34,11 +40,25 @@ function processQueue(error) {
   refreshQueue = [];
 }
 
+function releaseRefreshLock(error) {
+  clearTimeout(refreshSafetyTimer);
+  refreshSafetyTimer = null;
+  processQueue(error);
+  isRefreshing = false;
+}
+
 /**
  * Executes a token refresh call.
  * Centralized so both request and response interceptors can trigger it.
  */
 async function performTokenRefresh() {
+  // Arm the safety timer: if the refresh endpoint hangs for more than 10 s,
+  // force-release the lock so queued requests are rejected rather than blocked forever.
+  refreshSafetyTimer = setTimeout(() => {
+    console.warn("[Auth] Token refresh timed out after 10 s. Force-releasing refresh lock.");
+    releaseRefreshLock(new Error("Token refresh timed out"));
+  }, 10_000);
+
   const refreshResponse = await axios.post(
     "/api/proxy/dj-rest-auth/token/refresh/",
     {},
@@ -91,16 +111,14 @@ api.interceptors.request.use(async (config) => {
 
         try {
           await performTokenRefresh();
-          processQueue(null);
+          releaseRefreshLock(null);
         } catch (refreshError) {
-          processQueue(refreshError);
+          releaseRefreshLock(refreshError);
 
           // Force session logout and redirect on failure
           window.dispatchEvent(new CustomEvent("auth:sessionExpired"));
           window.location.href = "/";
           return Promise.reject(refreshError);
-        } finally {
-          isRefreshing = false;
         }
       }
     }
@@ -130,10 +148,10 @@ api.interceptors.response.use(
 
       try {
         await performTokenRefresh();
-        processQueue(null);
+        releaseRefreshLock(null);
         return api(originalRequest);
       } catch (refreshError) {
-        processQueue(refreshError);
+        releaseRefreshLock(refreshError);
 
         // Force session logout and redirect on failure
         if (typeof window !== "undefined") {
@@ -142,8 +160,6 @@ api.interceptors.response.use(
         }
 
         return Promise.reject(refreshError);
-      } finally {
-        isRefreshing = false;
       }
     }
 

@@ -15,10 +15,16 @@ import { useModal } from "@/context/ModalContext";
 import { MODALS } from "../modals/modalConstants";
 
 export default function ChatPage() {
-  const { isAuthenticated, isSessionChecked, wsToken, userId } = useAuth();
+  const { isAuthenticated, isSessionChecked, isTokenReady, wsToken, userId } = useAuth();
   const theme = useTheme();
-  const socketToken = isSessionChecked && isAuthenticated
-    ? (wsToken || "cookie-auth")
+
+  // Only connect the WebSocket once:
+  // 1. The session check is complete (isSessionChecked) so we know the user is authenticated.
+  // 2. The token refresh check has fully settled (isTokenReady) so wsToken holds a valid JWT.
+  // Passing null keeps the socket disconnected; the hook will connect as soon as we pass a real token.
+  // We never fall back to "cookie-auth" — the server requires a JWT in the query-string.
+  const socketToken = isSessionChecked && isAuthenticated && isTokenReady
+    ? (wsToken || null)
     : null;
 
   const {
