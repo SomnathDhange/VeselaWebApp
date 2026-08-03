@@ -15,6 +15,7 @@ import { Mic, Send } from "lucide-react";
 export default function ChatInput({
   onSend,
   isConnected,
+  status,
   isGuestLocked = false,
 }) {
   const theme = useTheme();
@@ -27,14 +28,22 @@ export default function ChatInput({
   const SSR_PLACEHOLDER = "Send Message ...";
   const [placeholder, setPlaceholder] = useState(SSR_PLACEHOLDER);
   useEffect(() => {
-    setPlaceholder(
-      isGuestLocked
-        ? "Limit reached. Log in or upgrade to continue..."
-        : isConnected
-          ? "Send Message ..."
-          : "Connecting..."
-    );
-  }, [isConnected, isGuestLocked]);
+    queueMicrotask(() => {
+      setPlaceholder(
+        isGuestLocked
+          ? "Limit reached. Log in or upgrade to continue..."
+          : status
+            ? status === "connected"
+              ? "Send Message ..."
+              : status === "connecting"
+                ? "Connecting..."
+                : "Disconnected. Type to queue..."
+            : isConnected
+              ? "Send Message ..."
+              : "Connecting..."
+      );
+    });
+  }, [status, isConnected, isGuestLocked]);
 
   const containerRef = useRef(null);
   const inputRef = useRef(null);
@@ -43,7 +52,7 @@ export default function ChatInput({
   const isOverLimit = wordCount > 2000;
 
   const isSendEnabled =
-    inputValue.trim().length > 0 && isConnected && !isGuestLocked && !isOverLimit;
+    inputValue.trim().length > 0 && !isGuestLocked && !isOverLimit;
 
   const handleSend = () => {
     if (!isSendEnabled) return;

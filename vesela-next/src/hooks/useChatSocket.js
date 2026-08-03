@@ -1,6 +1,7 @@
 "use client";
 
 import { useCallback, useEffect, useRef, useState } from "react";
+import { saveAuthTokenExpiration } from "@/utils/authUtil";
 
 // ─── Constants ────────────────────────────────────────────────────────────────
 
@@ -8,23 +9,45 @@ const WS_URL = "wss://portal.grayskyai.com/ws/chat/";
 
 // Close codes that are worth retrying (transient / network errors)
 const RETRYABLE_CODES = new Set([1001, 1006, 1011, 1012, 1013, 1014]);
-const MAX_RETRIES = 5;
 const BASE_BACKOFF_MS = 1000;
 
 // Message types that carry no content and must never touch UI state
 const SILENT_TYPES = new Set(["ping", "pong", "heartbeat", "keepalive"]);
 
-// ─── Limit-reached detector ──────────────────────────────────────────────────
 
-const LIMIT_PHRASES = [
-  "Your 20 free messages will reset",
-  "upgrading to the Pro subscription",
-  "Thanks so much for chatting with Vesela today",
-];
-
-function isLimitMessage(text) {
-  return LIMIT_PHRASES.some((phrase) => text.includes(phrase));
+async function refreshAccessToken() {
+  try {
+    const res = await fetch("/api/proxy/dj-rest-auth/token/refresh/", {
+      method: "POST",
+      credentials: "include",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({}),
+    });
+    if (res.ok) {
+      const data = await res.json();
+      const newToken = data.access ?? data.access_token ?? null;
+      if (newToken) {
+        saveAuthTokenExpiration(newToken);
+        if (typeof window !== "undefined") {
+          window.dispatchEvent(
+            new CustomEvent("auth:sessionRefreshed", {
+              detail: { token: newToken },
+            })
+          );
+        }
+        return;
+      }
+    }
+  } catch (err) {
+    console.error("[WS] Failed to refresh token:", err);
+  }
+  // Clear token state if refresh failed
+  if (typeof window !== "undefined") {
+    window.dispatchEvent(new CustomEvent("auth:sessionExpired"));
+    window.location.href = "/";
+  }
 }
+
 export const useChatSocket = (token, userId) => {
   // ─── Refs ──────────────────────────────────────────────────────────────────
   const socketRef = useRef(null);
@@ -37,7 +60,7 @@ export const useChatSocket = (token, userId) => {
   const currentAssistantIdRef = useRef(null);
   const messageQueueRef = useRef([]);
   const conversationIdRef = useRef(null);
-  
+
   // Restore conversation ID from localStorage on mount/initial load
   useEffect(() => {
     if (typeof window !== "undefined") {
@@ -103,6 +126,12 @@ export const useChatSocket = (token, userId) => {
       console.log("[WS] Captured and updated conversationId from server payload:", data.conversation_id);
     }
 
+    // Check if the backend indicates that the daily message limit has been reached
+    if (data.daily_limit_reached === true) {
+      console.warn("[WS] Daily limit reached. Locking chat.");
+      setIsLocked(true);
+    }
+
     switch (data.type) {
       case "thinking":
         setIsStreaming(true);
@@ -159,10 +188,6 @@ export const useChatSocket = (token, userId) => {
           ...prev,
           { id: crypto.randomUUID(), role: "assistant", message: msg, isError: true },
         ]);
-        if (isLimitMessage(msg)) {
-          console.warn("[WS] User limit message detected. Locking chat.");
-          setIsLocked(true);
-        }
         break;
       }
 
@@ -210,11 +235,11 @@ export const useChatSocket = (token, userId) => {
     // Close any existing socket cleanly before reconnecting
     const old = socketRef.current;
     if (old) {
-      if (old.readyState === WebSocket.CONNECTING || old.readyState === WebSocket.OPEN) {
-        console.log(`[WS] Connection already in progress or open (readyState: ${old.readyState}). Skipping connect.`);
+      if (old.readyState === WebSocket.OPEN) {
+        console.log("[WS] Socket already open. Skipping connect.");
         return;
       }
-      console.log("[WS] Closing existing closed/closing socket before reconnecting.");
+      console.log(`[WS] Closing existing non-open socket (readyState: ${old.readyState}) before reconnecting.`);
       old.onopen = old.onmessage = old.onclose = old.onerror = null;
       try { old.close(); } catch (err) { console.error("[WS] Error closing stale socket:", err); }
       socketRef.current = null;
@@ -291,7 +316,14 @@ export const useChatSocket = (token, userId) => {
         const { code, reason } = event;
         console.warn(`[WS] Closed — code=${code}, reason=${reason || "none"}`);
 
-        // Auth failure codes: stop reconnecting immediately
+        // Auth expired: try to refresh the token
+        if (code === 4001) {
+          console.warn("[WS] Auth token expired (4001). Refreshing token...");
+          refreshAccessToken();
+          return;
+        }
+
+        // Other auth/server rejection codes: stop reconnecting immediately
         if (code >= 4000 && code < 5000) {
           console.warn("[WS] Auth/server rejected — will not reconnect. Code:", code);
           return;
@@ -306,24 +338,19 @@ export const useChatSocket = (token, userId) => {
           return;
         }
 
-        // Exponential backoff with jitter
-        if (retryCountRef.current >= MAX_RETRIES) {
-          console.warn("[WS] Max retries reached. Giving up.");
-          return;
-        }
-
+        // Exponential backoff with jitter (no permanent retry limit)
         const delay = Math.min(
           BASE_BACKOFF_MS * 2 ** retryCountRef.current + Math.random() * 500,
           30_000,
         );
         retryCountRef.current += 1;
-        console.log(`[WS] Reconnecting in ${Math.round(delay)}ms (attempt ${retryCountRef.current}/${MAX_RETRIES})`);
+        console.log(`[WS] Reconnecting in ${Math.round(delay)}ms (attempt ${retryCountRef.current})`);
 
         retryTimerRef.current = setTimeout(() => connectRef.current?.(), delay);
       };
 
       ws.onerror = (err) => {
-        console.error("[WS] Socket error occurred:", err);
+        console.warn("[WS] Socket connection error (normal during offline/idle):", err);
       };
     } catch (err) {
       console.error("[WS] Error creating WebSocket instance:", err);
@@ -335,6 +362,35 @@ export const useChatSocket = (token, userId) => {
   useEffect(() => {
     connectRef.current = connect;
   }, [connect]);
+
+  // Reconnect on app focus, visibility change, and online events
+  useEffect(() => {
+    if (typeof window === "undefined") return;
+
+    const handleActivity = () => {
+      if (tokenRef.current && (!socketRef.current || socketRef.current.readyState === WebSocket.CLOSED)) {
+        console.log("[WS] App active/online. Reconnecting immediately...");
+        retryCountRef.current = 0;
+        connectRef.current?.();
+      }
+    };
+
+    const handleVisibilityChange = () => {
+      if (document.visibilityState === "visible") {
+        handleActivity();
+      }
+    };
+
+    window.addEventListener("online", handleActivity);
+    window.addEventListener("focus", handleActivity);
+    document.addEventListener("visibilitychange", handleVisibilityChange);
+
+    return () => {
+      window.removeEventListener("online", handleActivity);
+      window.removeEventListener("focus", handleActivity);
+      document.removeEventListener("visibilitychange", handleVisibilityChange);
+    };
+  }, []);
 
   useEffect(() => {
     if (!token) {
@@ -393,34 +449,14 @@ export const useChatSocket = (token, userId) => {
     if (ws?.readyState === WebSocket.OPEN) {
       console.log("[WS] Socket is OPEN. Sending payload immediately.");
       ws.send(JSON.stringify(payload));
-    } else if (ws?.readyState === WebSocket.CONNECTING) {
-      // Socket is mid-handshake — queue the message and attach a one-shot drain
-      // listener so it is flushed the moment onopen fires for THIS socket.
-      // We must NOT call connect() here because it will bail seeing CONNECTING state.
-      console.log("[WS] Socket is CONNECTING. Queuing message and attaching one-shot drain.");
-      messageQueueRef.current.push(payload);
-      const existingOpen = ws.onopen;
-      ws.onopen = (event) => {
-        // Fire the original onopen handler first
-        existingOpen?.(event);
-        // Then drain any messages that were queued during the handshake
-        while (messageQueueRef.current.length > 0) {
-          const queued = messageQueueRef.current.shift();
-          if (conversationIdRef.current && !queued.conversation_id) {
-            queued.conversation_id = conversationIdRef.current;
-          }
-          console.log("[WS] Draining queued message after onopen:", queued);
-          ws.send(JSON.stringify(queued));
-        }
-      };
     } else {
-      const stateString = ws ? `readyState: ${ws.readyState}` : "null";
-      console.log(`[WS] Socket is not open or connecting (${stateString}). Queuing message and initiating connection.`);
-      // Queue and (re)connect — the queue is drained in the new socket's onopen
+      console.log("[WS] Socket is not open. Queuing message.");
       messageQueueRef.current.push(payload);
-      connect();
+      if (!ws || ws.readyState === WebSocket.CLOSED) {
+        console.log("[WS] Initiating connection from sendMessage.");
+        connect();
+      }
     }
-    // connect is stable (no deps), so this callback is stable too
   }, [connect]);
 
   return {
@@ -430,5 +466,6 @@ export const useChatSocket = (token, userId) => {
     isConnected: status === "connected",
     isStreaming,
     isLocked,
+    reconnect: connect,
   };
 };
