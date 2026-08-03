@@ -1,11 +1,12 @@
 "use client";
 
 import { Box, useTheme } from "@mui/material";
-import { useEffect, useLayoutEffect, useMemo, useRef } from "react";
+import { useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 
 import ChatBubble from "./ChatBubble";
 import ChatInput from "./ChatInput";
 import GuestLimitBanner from "./GuestLimitBanner";
+import ConnectionStatusBanner from "./ConnectionStatusBanner";
 
 import { useAuth } from "@/context/AuthContext";
 import { useChatSocket } from "@/hooks/useChatSocket";
@@ -17,6 +18,11 @@ import { MODALS } from "../modals/modalConstants";
 export default function ChatPage() {
   const { isAuthenticated, isSessionChecked, isTokenReady, wsToken, userId } = useAuth();
   const theme = useTheme();
+
+  const [isMounted, setIsMounted] = useState(false);
+  useEffect(() => {
+    setIsMounted(true);
+  }, []);
 
   // Only connect the WebSocket once:
   // 1. The session check is complete (isSessionChecked) so we know the user is authenticated.
@@ -31,6 +37,8 @@ export default function ChatPage() {
     messages,
     sendMessage,
     isConnected,
+    status,
+    reconnect,
     isStreaming: isAuthStreaming,
     isLocked: isAuthLocked,
   } = useChatSocket(socketToken, userId);
@@ -123,19 +131,30 @@ export default function ChatPage() {
 
   return (
     <>
-      <GuestLimitBanner
-        open={isLimitLocked}
-        onClick={() => {
-          openModal(isAuthenticated ? MODALS.PLANS : MODALS.LOGIN, {
-            source: "chat",
-          });
-        }}
-        message={
-          isAuthenticated
-            ? "Free message limit reached. Upgrade to Pro to continue."
-            : "Free guest limit reached. Login or upgrade to continue."
-        }
-      />
+      {isMounted && (
+        isLimitLocked ? (
+          <GuestLimitBanner
+            open={isLimitLocked}
+            onClick={() => {
+              openModal(isAuthenticated ? MODALS.PLANS : MODALS.LOGIN, {
+                source: "chat",
+              });
+            }}
+            message={
+              isAuthenticated
+                ? "Free message limit reached. Upgrade to Pro to continue."
+                : "Free guest limit reached. Login or upgrade to continue."
+            }
+          />
+        ) : (
+          isAuthenticated && (
+            <ConnectionStatusBanner
+              status={status}
+              onReconnect={reconnect}
+            />
+          )
+        )
+      )}
 
       {/* Gradient overlay — fades the page background into the transparent header.
           Must live here (not inside AppBar) because AppBar's own background would
@@ -195,6 +214,7 @@ export default function ChatPage() {
         <ChatInput
           onSend={handleSend}
           isConnected={isAuthenticated ? isConnected : true}
+          status={isAuthenticated ? status : "connected"}
           isGuestLocked={isLimitLocked}
         />
       </Box>
