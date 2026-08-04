@@ -241,18 +241,24 @@ export const AuthProvider = ({ children }) => {
           }
           // Mark token as ready — all refresh/validation work is complete
           setIsTokenReady(true);
-        } else {
-          // Not authenticated — clear any stale local data silently
+         } else if (res.status === 401 || res.status === 403) {
+          // Definitive unauthenticated response from the backend — clear state.
           setUser(null);
           setWsToken(null);
           setIsTokenReady(false);
           localStorageUtil.set(USER_DETAILS, {});
+        } else {
+          // 503 (upstream unreachable), 500, or any other non-auth error:
+          // treat as a transient failure. Keep existing user state from
+          // localStorage so the UI doesn't flash the login page on a brief
+          // network outage. isSessionChecked will still be set to true below
+          // so the app doesn't block forever.
+          console.warn(`[Auth] Session check returned ${res.status} — treating as transient, preserving cached state.`);
         }
       } catch {
-        // Network failure — treat as unauthenticated; do not redirect
-        setUser(null);
-        setWsToken(null);
-        setIsTokenReady(false);
+        // Network/fetch failure (e.g. no internet, CORS, DNS).
+        // Same policy as 503: keep existing state, do not clear the user.
+        console.warn("[Auth] Session check fetch failed (network error) — preserving cached state.");
       } finally {
         setIsSessionChecked(true);
       }
