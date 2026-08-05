@@ -4,7 +4,7 @@ import { useEffect, useState } from "react";
 import { useRouter } from "next/navigation";
 import { useAuth } from "@/context/AuthContext";
 import { localStorageUtil } from "@/utils/localStorageUtil";
-import { USER_DETAILS, WELCOME_COMPLETED } from "@/constant";
+import { USER_DETAILS } from "@/constant";
 
 // ─── Minimal full-screen loader ───────────────────────────────────────────────
 // Rendered in place of the marketing page while we verify the session.
@@ -56,26 +56,35 @@ function AuthCheckLoader() {
  *     localStorage is empty          → render null (show marketing page immediately)
  *
  *   Phase 2 — definitive (after isSessionChecked = true):
- *     isAuthenticated = true  → router.replace to /chat (returning) or /welcome (first visit)
+ *     isAuthenticated = true  → router.replace("/welcome") — always
  *     isAuthenticated = false → render null (marketing page is already visible or loads now)
  *
- * This pattern is identical to how ChatGPT, Claude, and Perplexity route users:
- * they never flash the marketing page to an authenticated user.
+ * Always routing to /welcome (never /chat) because:
+ *   - /welcome IS the Hero Chat entry point.
+ *   - WELCOME_COMPLETED is set immediately on the first /welcome mount, so
+ *     checking it would route all returning users to /chat — wrong.
+ *   - The user can navigate to /chat from /welcome by sending a message.
  */
 export default function ClientRedirect() {
   const { isAuthenticated, isSessionChecked } = useAuth();
   const router = useRouter();
 
-  // Optimistic: check localStorage synchronously on first render so we know
-  // whether to block the marketing page before the network call resolves.
-  const [hasOptimisticUser] = useState(() => {
+  // Start as false so server and client initial renders both produce null
+  // (matching SSR output). After hydration, the effect checks localStorage
+  // and updates to true if a cached user is found — this is the only safe
+  // way to read localStorage without causing a hydration mismatch in Next.js.
+  const [hasOptimisticUser, setHasOptimisticUser] = useState(false);
+
+  useEffect(() => {
     try {
       const stored = localStorageUtil.get(USER_DETAILS);
-      return Boolean(stored && typeof stored === "object" && stored.pk);
+      if (stored && typeof stored === "object" && stored.pk) {
+        setHasOptimisticUser(true);
+      }
     } catch {
-      return false;
+      // localStorage unavailable (SSR guard — should not reach here, but safe)
     }
-  });
+  }, []); // Run once after hydration
 
   useEffect(() => {
     // Not yet confirmed — keep showing the loader (if optimistic) or nothing.
@@ -84,20 +93,8 @@ export default function ClientRedirect() {
     // Session confirmed as unauthenticated — show marketing page.
     if (!isAuthenticated) return;
 
-    // Session confirmed as authenticated.
-    // Returning users (have already seen /welcome) go straight to /chat.
-    // First-time users go to /welcome for the Hero Chat onboarding experience.
-    try {
-      const welcomeCompleted = localStorageUtil.get(WELCOME_COMPLETED);
-      if (welcomeCompleted) {
-        router.replace("/chat");
-      } else {
-        router.replace("/welcome");
-      }
-    } catch {
-      // Fallback: always safe to send to /welcome
-      router.replace("/welcome");
-    }
+    // Session confirmed as authenticated — always go to /welcome.
+    router.replace("/welcome");
   }, [isAuthenticated, isSessionChecked, router]);
 
   // Phase 1: optimistic user found → block the marketing page with a silent loader.

@@ -41,12 +41,12 @@ async function handleRequest(req, context, method) {
   try {
     // Next 15+: params is async
     const resolvedParams = await context.params;
-    const path = resolvedParams.path.join("/");
+    const path = resolvedParams.path.filter(Boolean).join("/");
 
     // Preserve query params
     const search = req.nextUrl.search;
 
-    // Force trailing slash (Django backend requirement)
+    // Force single trailing slash (Django backend requirement)
     const url = `${BASE_URL}/${path}/${search}`;
 
     console.log(`➡️ Proxying ${method}: ${url}`);
