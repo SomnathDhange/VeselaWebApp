@@ -2,7 +2,7 @@
 
 import { useEffect } from "react";
 import { useModal } from "@/context/ModalContext";
-import { POST_LOGIN_NAVIGATE_TO, WELCOME_COMPLETED } from "@/constant";
+import { POST_LOGIN_NAVIGATE_TO } from "@/constant";
 import { useRouter } from "next/navigation";
 import { localStorageUtil } from "@/utils/localStorageUtil";
 
@@ -11,8 +11,11 @@ import { localStorageUtil } from "@/utils/localStorageUtil";
  *
  * Navigates instantly (no delay) to the correct post-login destination:
  *   - A previously-stored intended destination (POST_LOGIN_NAVIGATE_TO), or
- *   - /chat  if the user has already completed the welcome experience, or
- *   - /welcome for first-time users.
+ *   - /welcome (the Hero Chat entry point) for all users.
+ *
+ * Always goes to /welcome because WELCOME_COMPLETED is set the moment
+ * WelcomePage mounts — checking it would always route returning users to
+ * /chat, which is wrong. /welcome IS the Hero Chat interface.
  *
  * The modal closes at the same time so the transition feels seamless.
  */
@@ -21,14 +24,14 @@ const SuccessfulModal = () => {
   const router = useRouter();
 
   useEffect(() => {
-    // Determine destination — same logic as ClientRedirect for consistency.
+    // Honor a specific redirect destination stored before the login modal opened.
     const redirectTo = localStorageUtil.get(POST_LOGIN_NAVIGATE_TO);
     if (redirectTo) {
       localStorageUtil.remove(POST_LOGIN_NAVIGATE_TO);
       router.push(redirectTo);
     } else {
-      const welcomeCompleted = localStorageUtil.get(WELCOME_COMPLETED);
-      router.push(welcomeCompleted ? "/chat" : "/welcome");
+      // Always send to /welcome — it is the Hero Chat entry point.
+      router.push("/welcome");
     }
     // Close the modal at the same tick so no stale overlay is left behind.
     closeModal();
